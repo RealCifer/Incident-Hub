@@ -16,11 +16,10 @@ class RedisClient:
         if self.pool:
             await self.pool.disconnect()
 
-    async def push_to_stream(self, stream_name: str, data: dict, maxlen: int = 100000):
+    async def push_to_queue(self, queue_name: str, data: dict):
         if self.client:
-            # We can use XADD with MAXLEN to limit the stream size
-            # Ensure all values in the dict are strings/bytes for redis stream
-            stringified_data = {k: str(v) for k, v in data.items()}
-            await self.client.xadd(name=stream_name, fields=stringified_data, maxlen=maxlen)
+            import json
+            stringified_data = json.dumps(data)
+            await self.client.rpush(queue_name, stringified_data)
 
 redis_client = RedisClient()

@@ -10,7 +10,5 @@ async def health_check():
 
 @router.post("/signals", status_code=status.HTTP_202_ACCEPTED)
 async def ingest_signal(signal: Signal):
-    # Push signal payload to redis stream without blocking on DB
-    # We serialize datetime to string if needed, or let model_dump(mode="json") handle it
-    await redis_client.push_to_stream("signals_stream", signal.model_dump(mode="json"))
+    await redis_client.push_to_queue("signals_queue", signal.model_dump(mode="json"))
     return {"status": "accepted", "message": "Signal queued for processing"}
