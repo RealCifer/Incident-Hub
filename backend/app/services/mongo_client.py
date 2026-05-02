@@ -85,6 +85,27 @@ class MongoClient:
                 return_document=True,
             )
             return result
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(pymongo.errors.PyMongoError),
+        reraise=True
+    )
+    async def submit_rca(self, workitem_id: str, rca_data: dict) -> dict | None:
+        """
+        Embed the RCA (including auto-calculated mttr_seconds) into the WorkItem.
+        Only allowed when the WorkItem is in RESOLVED state.
+        Returns the updated document, or None if not found / wrong state.
+        """
+        if self.db is not None:
+            now = datetime.now(timezone.utc)
+            result = await self.db.work_items.find_one_and_update(
+                # Guard: RCA can only be submitted on a RESOLVED WorkItem
+                {"workitem_id": workitem_id, "state": "RESOLVED"},
+                {"$set": {"rca": rca_data, "updated_at": now}},
+                return_document=True,
+            )
+            return result
         return None
 
 mongo_client = MongoClient()

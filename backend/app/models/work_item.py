@@ -63,12 +63,58 @@ class InvalidStateTransitionError(Exception):
         self.target = target
         self.allowed = allowed
         super().__init__(
-            f"Invalid transition: {current.value} → {target.value}. "
+            f"Invalid transition: {current.value} \u2192 {target.value}. "
             f"From '{current.value}', only '{allowed}' is allowed."
         )
 
 
+class RcaMissingError(Exception):
+    """Raised when a WorkItem is moved to CLOSED without a completed RCA."""
+
+    def __init__(self, workitem_id: str):
+        super().__init__(
+            f"WorkItem '{workitem_id}' cannot be moved to CLOSED without a completed RCA. "
+            f"Submit an RCA via POST /rca/{workitem_id} first."
+        )
+
+
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
+
+class RCARequest(BaseModel):
+    """Payload required to submit a Root Cause Analysis for a WorkItem."""
+    root_cause_category: str = Field(
+        ...,
+        description="High-level category of the root cause (e.g. 'Infrastructure', 'Code Bug', 'Human Error')",
+    )
+    fix_applied: str = Field(
+        ...,
+        description="Description of the fix that was applied to resolve the incident",
+    )
+    prevention_steps: str = Field(
+        ...,
+        description="Steps to be taken to prevent this class of incident in the future",
+    )
+    start_time: datetime = Field(
+        ...,
+        description="UTC datetime when the incident started (used for MTTR calculation)",
+    )
+    end_time: datetime = Field(
+        ...,
+        description="UTC datetime when the incident was resolved (used for MTTR calculation)",
+    )
+
+
+class RCAResponse(BaseModel):
+    """RCA data as stored on the WorkItem."""
+    root_cause_category: str
+    fix_applied: str
+    prevention_steps: str
+    start_time: datetime
+    end_time: datetime
+    mttr_seconds: float = Field(
+        ..., description="Mean Time To Resolve in seconds (end_time - start_time)"
+    )
+
 
 class WorkItem(BaseModel):
     workitem_id: str
@@ -76,6 +122,7 @@ class WorkItem(BaseModel):
     state: WorkItemState = WorkItemState.OPEN
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    rca: Optional[RCAResponse] = None
 
 
 class WorkItemTransitionRequest(BaseModel):
@@ -90,3 +137,4 @@ class WorkItemResponse(BaseModel):
     state: WorkItemState
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    rca: Optional[RCAResponse] = None
