@@ -99,4 +99,12 @@ class RedisClient:
         await pipeline.execute()
 
 
+    async def ping(self) -> bool:
+        if self.client:
+            try:
+                return await self.client.ping()
+            except Exception:
+                return False
+        return False
+
 redis_client = RedisClient()

@@ -1,6 +1,10 @@
 import logging
 from collections import Counter
+from datetime import datetime
 from fastapi import APIRouter, status, HTTPException
+from fastapi.responses import JSONResponse
+
+logger = logging.getLogger(__name__)
 from app.models.signal import Signal
 from app.models.work_item import (
     WorkItemTransitionRequest,
@@ -147,6 +151,10 @@ async def transition_work_item(workitem_id: str, body: WorkItemTransitionRequest
             )
 
     # 4. Persist atomically (optimistic concurrency guard)
+    logger.info("attempting_state_transition", extra={
+        "workitem_id": workitem_id,
+        "target_state": body.target_state
+    })
     updated = await mongo_client.transition_work_item_state(
         workitem_id=workitem_id,
         current_state=current_state.value,
@@ -241,3 +249,24 @@ async def submit_rca(work_item_id: str, body: RCARequest):
 async def get_workitem_signals(workitem_id: str):
     signals = await mongo_client.get_signals_by_workitem(workitem_id)
     return signals
+@router.get(
+    "/health",
+    summary="Service Health Check",
+    description="Checks the connectivity to Redis and MongoDB."
+)
+async def health_check():
+    redis_ok = await redis_client.ping()
+    mongo_ok = await mongo_client.ping()
+    
+    status_code = status.HTTP_200_OK if redis_ok and mongo_ok else status.HTTP_503_SERVICE_UNAVAILABLE
+    
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "status": "pass" if redis_ok and mongo_ok else "fail",
+            "dependencies": {
+                "redis": "connected" if redis_ok else "disconnected",
+                "mongodb": "connected" if mongo_ok else "disconnected"
+            }
+        }
+    )

@@ -146,4 +146,14 @@ class MongoClient:
             return await cursor.to_list(length=None)
         return []
 
+    async def ping(self) -> bool:
+        """Check if MongoDB is alive."""
+        if self.client:
+            try:
+                await self.client.admin.command("ping")
+                return True
+            except Exception:
+                return False
+        return False
+
 mongo_client = MongoClient()
