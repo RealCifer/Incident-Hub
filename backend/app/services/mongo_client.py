@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from motor.motor_asyncio import AsyncIOMotorClient
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 from app.core.config import settings
@@ -37,11 +38,53 @@ class MongoClient:
     )
     async def create_work_item(self, workitem_id: str, component_id: str):
         if self.db is not None:
-            from datetime import datetime, timezone
+            now = datetime.now(timezone.utc)
             await self.db.work_items.insert_one({
                 "workitem_id": workitem_id,
                 "component_id": component_id,
-                "created_at": datetime.now(timezone.utc)
+                "state": "OPEN",
+                "created_at": now,
+                "updated_at": now,
             })
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(pymongo.errors.PyMongoError),
+        reraise=True
+    )
+    async def get_work_item(self, workitem_id: str) -> dict | None:
+        """Fetch a WorkItem document by its workitem_id."""
+        if self.db is not None:
+            return await self.db.work_items.find_one(
+                {"workitem_id": workitem_id}, {"_id": 0}
+            )
+        return None
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(pymongo.errors.PyMongoError),
+        reraise=True
+    )
+    async def transition_work_item_state(
+        self, workitem_id: str, current_state: str, target_state: str
+    ) -> dict | None:
+        """
+        Atomically update the WorkItem state in MongoDB.
+        Uses a filter on both workitem_id AND current state to prevent
+        overwriting a state that was already changed by a concurrent request.
+        Returns the updated document, or None if no document matched (lost race).
+        """
+        if self.db is not None:
+            now = datetime.now(timezone.utc)
+            result = await self.db.work_items.find_one_and_update(
+                # Guard: only match if state is still what we expect
+                {"workitem_id": workitem_id, "state": current_state},
+                {"$set": {"state": target_state, "updated_at": now}},
+                return_document=True,
+            )
+            return result
+        return None
 
 mongo_client = MongoClient()

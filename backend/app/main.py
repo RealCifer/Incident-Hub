@@ -5,6 +5,7 @@ from app.core.config import settings
 from app.core.logging import setup_logging
 from app.api.endpoints import router as api_router
 from app.services.redis_client import redis_client
+from app.services.mongo_client import mongo_client
 from app.api.middleware import RateLimitMiddleware
 
 # Initialize logging before FastAPI app creation
@@ -12,11 +13,13 @@ setup_logging()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup: connect to redis
+    # Startup: connect to Redis and MongoDB
     await redis_client.connect(settings.REDIS_URI)
+    mongo_client.connect()
     yield
-    # Shutdown: disconnect from redis
+    # Shutdown: disconnect
     await redis_client.disconnect()
+    mongo_client.disconnect()
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
