@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '../api/client';
 import { motion } from 'framer-motion';
-import { AlertCircle, Clock, ChevronRight, Filter } from 'lucide-react';
+import { AlertCircle, Clock, ChevronRight, Filter, Activity, CheckCircle } from 'lucide-react';
 
 const SEVERITY_STYLES = {
   CRITICAL: 'bg-red-500/10 text-red-500 border-red-500/20 shadow-red-500/10',
@@ -47,6 +47,18 @@ export default function Dashboard() {
           transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
           className="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full"
         />
+      </div>
+    );
+  }
+
+  if (!data) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-slate-500 space-y-4">
+        <AlertCircle size={48} className="text-rose-500 opacity-50" />
+        <div className="text-lg font-medium">Failed to connect to Command Center</div>
+        <button onClick={fetchDashboard} className="px-4 py-2 bg-slate-800 rounded-lg text-sm hover:bg-slate-700 transition-colors">
+          Retry Connection
+        </button>
       </div>
     );
   }
@@ -139,6 +151,3 @@ export default function Dashboard() {
     </div>
   );
 }
-
-// Missing imports in previous blocks
-import { Activity, CheckCircle } from 'lucide-react';

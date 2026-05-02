@@ -65,14 +65,18 @@ async def get_dashboard():
         await redis_client.rebuild_dashboard_cache(db_incidents)
         incidents_raw = db_incidents
 
-    # 2. Sort by created_at descending (newest first)
-    def _sort_key(wi: dict):
-        ct = wi.get("created_at")
-        if ct is None:
-            return ""
-        return ct if isinstance(ct, str) else ct.isoformat()
+    # 2. Sort by severity then created_at descending
+    severity_weights = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
-    sorted_incidents = sorted(incidents_raw, key=_sort_key, reverse=True)
+    def _sort_key(wi: dict):
+        sev = wi.get("severity", "MEDIUM")
+        sev_weight = severity_weights.get(sev, 2)
+        ct = wi.get("created_at")
+        ct_str = ct if isinstance(ct, str) else (ct.isoformat() if ct else "")
+        # Sort by weight asc (critical first) then time desc
+        return (sev_weight, -datetime.fromisoformat(ct_str.replace("Z", "+00:00")).timestamp() if ct_str else 0)
+
+    sorted_incidents = sorted(incidents_raw, key=_sort_key)
 
     # 3. Count by state
     counts = Counter(wi.get("state", "UNKNOWN") for wi in sorted_incidents)
@@ -228,3 +232,12 @@ async def submit_rca(work_item_id: str, body: RCARequest):
     await redis_client.cache_incident(clean)
 
     return _doc_to_response(clean)
+
+
+@router.get(
+    "/workitems/{workitem_id}/signals",
+    summary="Get all signals for a WorkItem",
+)
+async def get_workitem_signals(workitem_id: str):
+    signals = await mongo_client.get_signals_by_workitem(workitem_id)
+    return signals

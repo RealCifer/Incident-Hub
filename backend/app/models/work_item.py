@@ -11,6 +11,13 @@ class WorkItemState(str, Enum):
     CLOSED = "CLOSED"
 
 
+class WorkItemSeverity(str, Enum):
+    CRITICAL = "CRITICAL"
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+
+
 # Strict allowed transitions — only forward, no skipping
 ALLOWED_TRANSITIONS: dict[WorkItemState, WorkItemState] = {
     WorkItemState.OPEN: WorkItemState.INVESTIGATING,
@@ -120,6 +127,7 @@ class WorkItem(BaseModel):
     workitem_id: str
     component_id: str
     state: WorkItemState = WorkItemState.OPEN
+    severity: WorkItemSeverity = WorkItemSeverity.MEDIUM
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     rca: Optional[RCAResponse] = None
@@ -136,6 +144,7 @@ class WorkItemResponse(BaseModel):
     component_id: str
     # Default to OPEN so legacy docs without a state field don't crash deserialization
     state: WorkItemState = WorkItemState.OPEN
+    severity: WorkItemSeverity = WorkItemSeverity.MEDIUM
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     rca: Optional[RCAResponse] = None

@@ -65,6 +65,7 @@ async def consume_signals():
                                     "workitem_id": workitem_id,
                                     "component_id": component_id,
                                     "state": "OPEN",
+                                    "severity": "MEDIUM",
                                     "created_at": now_iso,
                                     "updated_at": now_iso,
                                     "rca": None,

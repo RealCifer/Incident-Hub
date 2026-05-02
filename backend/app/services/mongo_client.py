@@ -43,6 +43,7 @@ class MongoClient:
                 "workitem_id": workitem_id,
                 "component_id": component_id,
                 "state": "OPEN",
+                "severity": "MEDIUM",
                 "created_at": now,
                 "updated_at": now,
             })
@@ -127,6 +128,21 @@ class MongoClient:
                 },
                 {"_id": 0},
             )
+            return await cursor.to_list(length=None)
+        return []
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(pymongo.errors.PyMongoError),
+        reraise=True
+    )
+    async def get_signals_by_workitem(self, workitem_id: str) -> list[dict]:
+        """Fetch all raw signals linked to a specific workitem_id."""
+        if self.db is not None:
+            cursor = self.db.raw_signals.find(
+                {"workitem_id": workitem_id}, {"_id": 0}
+            ).sort("timestamp", -1)
             return await cursor.to_list(length=None)
         return []
 
