@@ -22,6 +22,21 @@ services:
       - mongodb
       - redis
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: ims_worker
+    environment:
+      - MONGODB_URI=mongodb://mongodb:27017/ims
+      - REDIS_URI=redis://redis:6379/0
+    volumes:
+      - ./backend/app:/code/app
+    depends_on:
+      - mongodb
+      - redis
+    command: python -m app.workers.signal_processor
+
   frontend:
     build:
       context: ./frontend
