@@ -140,9 +140,3 @@ curl -X POST http://localhost:8000/signals \
 - **Redis vs. Direct DB**: Redis is used for ingestion to ensure the API response time is independent of database latency (Consistency vs. Availability).
 - **Dual DB Strategy**: MongoDB is used for raw, schemaless signals (high write volume), while PostgreSQL is used for structured, transactional incident data (data integrity).
 - **Eventual Consistency**: The dashboard is eventually consistent with the source of truth to prioritize read performance.
-
-## 14. Future Improvements
-- **Horizontal Scaling**: Partitioning the Signal Worker across multiple containers for even higher throughput.
-- **Streaming Platforms**: Migrating from Redis to Apache Kafka for persistent, multi-consumer event streams.
-- **Integrations**: Webhook support for Slack, PagerDuty, and Microsoft Teams.
-- **Advanced Metrics**: Exporting ingestion and MTTR metrics to Prometheus/Grafana.
