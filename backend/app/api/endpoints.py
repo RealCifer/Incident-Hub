@@ -1,3 +1,5 @@
+import logging
+from collections import Counter
 from fastapi import APIRouter, status, HTTPException
 from app.models.signal import Signal
 from app.models.work_item import (
@@ -8,18 +10,28 @@ from app.models.work_item import (
     InvalidStateTransitionError,
     RcaMissingError,
     RCARequest,
-    RCAResponse,
+    DashboardResponse,
 )
 from app.services.redis_client import redis_client
 from app.services.mongo_client import mongo_client
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
+
+def _doc_to_response(doc: dict) -> WorkItemResponse:
+    """Strip Mongo's _id and coerce to WorkItemResponse."""
+    return WorkItemResponse(**{k: v for k, v in doc.items() if k != "_id"})
+
+
+# ── Health ────────────────────────────────────────────────────────────────────
 
 @router.get("/health")
 async def health_check():
     return {"status": "ok", "message": "Backend is running!"}
 
+
+# ── Signals ───────────────────────────────────────────────────────────────────
 
 @router.post("/signals", status_code=status.HTTP_202_ACCEPTED)
 async def ingest_signal(signal: Signal):
@@ -27,7 +39,56 @@ async def ingest_signal(signal: Signal):
     return {"status": "accepted", "message": "Signal queued for processing"}
 
 
-# ── WorkItem endpoints ────────────────────────────────────────────────────────
+# ── Dashboard ─────────────────────────────────────────────────────────────────
+
+@router.get(
+    "/dashboard",
+    response_model=DashboardResponse,
+    summary="Active incidents dashboard",
+    description=(
+        "Returns all active (non-CLOSED) incidents. "
+        "Served from the Redis cache for zero DB latency. "
+        "Falls back to MongoDB on cold start and warms the cache automatically."
+    ),
+)
+async def get_dashboard():
+    served_from_cache = True
+
+    # 1. Try Redis cache first
+    incidents_raw = await redis_client.get_dashboard_from_cache()
+
+    if incidents_raw is None:
+        # Cache is cold (key doesn't exist) — warm it from MongoDB
+        logger.info("Dashboard cache miss — warming from MongoDB")
+        served_from_cache = False
+        db_incidents = await mongo_client.get_active_work_items()
+        await redis_client.rebuild_dashboard_cache(db_incidents)
+        incidents_raw = db_incidents
+
+    # 2. Sort by created_at descending (newest first)
+    def _sort_key(wi: dict):
+        ct = wi.get("created_at")
+        if ct is None:
+            return ""
+        return ct if isinstance(ct, str) else ct.isoformat()
+
+    sorted_incidents = sorted(incidents_raw, key=_sort_key, reverse=True)
+
+    # 3. Count by state
+    counts = Counter(wi.get("state", "UNKNOWN") for wi in sorted_incidents)
+
+    # 4. Build response — coerce each raw dict through WorkItemResponse
+    incident_responses = [_doc_to_response(wi) for wi in sorted_incidents]
+
+    return DashboardResponse(
+        total_active=len(incident_responses),
+        counts_by_state=dict(counts),
+        incidents=incident_responses,
+        served_from_cache=served_from_cache,
+    )
+
+
+# ── WorkItems ─────────────────────────────────────────────────────────────────
 
 @router.get(
     "/workitems/{workitem_id}",
@@ -41,7 +102,7 @@ async def get_work_item(workitem_id: str):
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"WorkItem '{workitem_id}' not found.",
         )
-    return WorkItemResponse(**doc)
+    return _doc_to_response(doc)
 
 
 @router.patch(
@@ -50,7 +111,7 @@ async def get_work_item(workitem_id: str):
     summary="Transition a WorkItem to the next state",
 )
 async def transition_work_item(workitem_id: str, body: WorkItemTransitionRequest):
-    # 1. Fetch the current WorkItem
+    # 1. Fetch current WorkItem
     doc = await mongo_client.get_work_item(workitem_id)
     if not doc:
         raise HTTPException(
@@ -61,7 +122,7 @@ async def transition_work_item(workitem_id: str, body: WorkItemTransitionRequest
     current_state = WorkItemState(doc["state"])
     target_state = body.target_state
 
-    # 2. Validate the transition via the State Machine
+    # 2. Validate via State Machine
     machine = WorkItemStateMachine(current_state)
     try:
         machine.transition(target_state)
@@ -71,7 +132,7 @@ async def transition_work_item(workitem_id: str, body: WorkItemTransitionRequest
             detail=str(e),
         )
 
-    # 3. Block RESOLVED → CLOSED if no RCA has been submitted
+    # 3. Block RESOLVED → CLOSED without RCA
     if target_state == WorkItemState.CLOSED and not doc.get("rca"):
         try:
             raise RcaMissingError(workitem_id)
@@ -81,7 +142,7 @@ async def transition_work_item(workitem_id: str, body: WorkItemTransitionRequest
                 detail=str(e),
             )
 
-    # 4. Persist atomically — filter on current state to guard concurrent requests
+    # 4. Persist atomically (optimistic concurrency guard)
     updated = await mongo_client.transition_work_item_state(
         workitem_id=workitem_id,
         current_state=current_state.value,
@@ -89,7 +150,6 @@ async def transition_work_item(workitem_id: str, body: WorkItemTransitionRequest
     )
 
     if not updated:
-        # Another request changed the state concurrently; re-fetch and report
         fresh = await mongo_client.get_work_item(workitem_id)
         actual = fresh["state"] if fresh else "unknown"
         raise HTTPException(
@@ -100,10 +160,14 @@ async def transition_work_item(workitem_id: str, body: WorkItemTransitionRequest
             ),
         )
 
-    return WorkItemResponse(**{k: v for k, v in updated.items() if k != "_id"})
+    # 5. Update dashboard cache (CLOSED → evict, else upsert)
+    clean = {k: v for k, v in updated.items() if k != "_id"}
+    await redis_client.cache_incident(clean)
+
+    return _doc_to_response(clean)
 
 
-# ── RCA endpoints ─────────────────────────────────────────────────────────────
+# ── RCA ───────────────────────────────────────────────────────────────────────
 
 @router.post(
     "/rca/{work_item_id}",
@@ -113,22 +177,25 @@ async def transition_work_item(workitem_id: str, body: WorkItemTransitionRequest
     description=(
         "Submits a Root Cause Analysis for the given WorkItem. "
         "The WorkItem must be in RESOLVED state. "
-        "MTTR (Mean Time To Resolve) is auto-calculated as `end_time - start_time` and stored in seconds. "
+        "MTTR is auto-calculated as end_time - start_time and stored in seconds. "
         "An RCA is required before the WorkItem can be moved to CLOSED."
     ),
 )
 async def submit_rca(work_item_id: str, body: RCARequest):
-    # 1. Validate end_time > start_time
+    # 1. Validate time ordering
     if body.end_time <= body.start_time:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"end_time must be after start_time. Got start={body.start_time.isoformat()}, end={body.end_time.isoformat()}",
+            detail=(
+                f"end_time must be after start_time. "
+                f"Got start={body.start_time.isoformat()}, end={body.end_time.isoformat()}"
+            ),
         )
 
     # 2. Auto-calculate MTTR
     mttr_seconds = (body.end_time - body.start_time).total_seconds()
 
-    # 3. Build the RCA payload (plain dict for MongoDB storage)
+    # 3. Build RCA dict for MongoDB
     rca_data = {
         "root_cause_category": body.root_cause_category,
         "fix_applied": body.fix_applied,
@@ -138,14 +205,10 @@ async def submit_rca(work_item_id: str, body: RCARequest):
         "mttr_seconds": mttr_seconds,
     }
 
-    # 4. Persist — submit_rca guards that WorkItem must be in RESOLVED state
-    updated = await mongo_client.submit_rca(
-        workitem_id=work_item_id,
-        rca_data=rca_data,
-    )
+    # 4. Persist (guards WorkItem must be RESOLVED)
+    updated = await mongo_client.submit_rca(workitem_id=work_item_id, rca_data=rca_data)
 
     if not updated:
-        # Either WorkItem doesn't exist or it isn't in RESOLVED state
         doc = await mongo_client.get_work_item(work_item_id)
         if not doc:
             raise HTTPException(
@@ -160,4 +223,8 @@ async def submit_rca(work_item_id: str, body: RCARequest):
             ),
         )
 
-    return WorkItemResponse(**{k: v for k, v in updated.items() if k != "_id"})
+    # 5. Update dashboard cache with RCA-enriched doc (still RESOLVED, still active)
+    clean = {k: v for k, v in updated.items() if k != "_id"}
+    await redis_client.cache_incident(clean)
+
+    return _doc_to_response(clean)

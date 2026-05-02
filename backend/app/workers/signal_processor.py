@@ -58,6 +58,17 @@ async def consume_signals():
                                 workitem_id = new_workitem_id
                                 # We successfully acquired the lock/set the key, create the workitem in DB
                                 await mongo_client.create_work_item(workitem_id, component_id)
+                                # Seed the dashboard cache with the new OPEN incident
+                                from datetime import datetime, timezone
+                                now_iso = datetime.now(timezone.utc).isoformat()
+                                await redis_client.cache_incident({
+                                    "workitem_id": workitem_id,
+                                    "component_id": component_id,
+                                    "state": "OPEN",
+                                    "created_at": now_iso,
+                                    "updated_at": now_iso,
+                                    "rca": None,
+                                })
                             else:
                                 # Another worker set it concurrently, get their ID
                                 workitem_id_bytes = await redis_client.client.get(debounce_key)

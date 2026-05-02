@@ -134,7 +134,22 @@ class WorkItemTransitionRequest(BaseModel):
 class WorkItemResponse(BaseModel):
     workitem_id: str
     component_id: str
-    state: WorkItemState
+    # Default to OPEN so legacy docs without a state field don't crash deserialization
+    state: WorkItemState = WorkItemState.OPEN
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     rca: Optional[RCAResponse] = None
+
+
+class DashboardResponse(BaseModel):
+    """Snapshot of all active (non-CLOSED) incidents, served from Redis cache."""
+    total_active: int = Field(..., description="Total number of active (non-CLOSED) incidents")
+    counts_by_state: dict[str, int] = Field(
+        ..., description="Number of incidents per state (OPEN, INVESTIGATING, RESOLVED)"
+    )
+    incidents: list[WorkItemResponse] = Field(
+        ..., description="Full list of active incidents, sorted by created_at descending"
+    )
+    served_from_cache: bool = Field(
+        ..., description="True if data was served entirely from the Redis cache"
+    )

@@ -108,4 +108,26 @@ class MongoClient:
             return result
         return None
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type(pymongo.errors.PyMongoError),
+        reraise=True
+    )
+    async def get_active_work_items(self) -> list[dict]:
+        """
+        Fetch all non-CLOSED WorkItems from MongoDB.
+        Used to warm the Redis dashboard cache on cold start.
+        Only returns documents that have the `state` field (filters legacy docs).
+        """
+        if self.db is not None:
+            cursor = self.db.work_items.find(
+                {
+                    "state": {"$exists": True, "$ne": "CLOSED"},
+                },
+                {"_id": 0},
+            )
+            return await cursor.to_list(length=None)
+        return []
+
 mongo_client = MongoClient()
