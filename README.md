@@ -1,5 +1,7 @@
 # Incident Hub - Mission-Critical Incident Management System
 
+**Deployed Frontend:** [https://incident-hub-eta.vercel.app/](https://incident-hub-eta.vercel.app/)
+
 Incident Hub is a high-performance, resilient incident management platform designed for Site Reliability Engineering (SRE) teams. It is built to handle extreme signal volumes, providing automated ingestion, intelligent debouncing, and structured lifecycle management for critical system failures.
 
 ## 1. Overview
